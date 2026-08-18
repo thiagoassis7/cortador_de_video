@@ -2,126 +2,801 @@ package com.thiago.videoocutter.service;
 
 import org.springframework.stereotype.Service;
 
-import java.io.File;
-import java.io.IOException;
+import java.io.*;
 import java.text.Normalizer;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
 
 @Service
 public class CorteService {
 
-    private final String FFPROBE = "D:\\dowload\\ffmpeg\\ffmpeg-7.1.1-essentials_build\\bin\\ffprobe.exe";
-    private final String FFMPEG = "D:\\dowload\\ffmpeg\\ffmpeg-7.1.1-essentials_build\\bin\\ffmpeg.exe";
+    private final String FFPROBE =
+            "K:\\hd_backup_anterior\\dowload\\ffmpeg\\ffmpeg-7.1.1-essentials_build\\bin\\ffprobe.exe";
 
-    // 🔹 Normaliza (remove acentos e caracteres inválidos)
+    private final String FFMPEG =
+            "K:\\hd_backup_anterior\\dowload\\ffmpeg\\ffmpeg-7.1.1-essentials_build\\bin\\ffmpeg.exe";
+
+
+    // ============================================================
+    // NORMALIZAR TÍTULO
+    // ============================================================
+
     private String normalizarTitulo(String titulo) {
 
-        // Remove acentos
-        String texto = Normalizer.normalize(titulo, Normalizer.Form.NFD)
-                .replaceAll("\\p{InCombiningDiacriticalMarks}+", "");
+        String texto =
+                Normalizer.normalize(
+                                titulo,
+                                Normalizer.Form.NFD
+                        )
+                        .replaceAll(
+                                "\\p{InCombiningDiacriticalMarks}+",
+                                ""
+                        );
 
-        // Remove caracteres proibidos no Windows
-        texto = texto.replaceAll("[\\\\/:*?\"<>|]", "");
+        texto =
+                texto.replaceAll(
+                        "[\\\\/:*?\"<>|]",
+                        ""
+                );
 
-        // Remove espaços em excesso
-        texto = texto.trim().replaceAll(" +", " ");
+        texto =
+                texto.trim()
+                        .replaceAll(" +", " ");
 
         return texto;
     }
 
-    // 🔹 Corta o vídeo usando ffmpeg
-    public List<String> cortarVideo(String caminhoVideo, String titulo, int duracaoCorte)
-            throws IOException, InterruptedException {
 
-        List<String> cortes = new ArrayList<>();
-        File video = new File(caminhoVideo);
+    // ============================================================
+    // PREPARAR TIKTOK / SHORTS
+    // ============================================================
+
+    public String prepararTikTok(
+            String caminhoVideo
+    ) throws IOException, InterruptedException {
+
+        File video =
+                new File(caminhoVideo);
+
 
         if (!video.exists()) {
-            throw new RuntimeException("Vídeo não encontrado: " + caminhoVideo);
+
+            throw new RuntimeException(
+                    "Vídeo não encontrado: "
+                            + caminhoVideo
+            );
         }
 
-        titulo = normalizarTitulo(titulo);
 
-        String pastaCortes = video.getParent() + "\\cortes\\";
-        new File(pastaCortes).mkdirs();
+        String caminhoTemporario =
+                caminhoVideo.replace(
+                        ".mp4",
+                        "_tiktok_temp.mp4"
+                );
 
-        double duracaoTotal = obterDuracaoVideo(caminhoVideo);
-        int partes = (int) Math.ceil(duracaoTotal / duracaoCorte);
 
-        for (int i = 0; i < partes; i++) {
+        File arquivoTemp =
+                new File(caminhoTemporario);
 
-            String nomeCorte = pastaCortes + titulo + " - parte_" + (i + 1) + ".mp4";
-            String inicio = String.valueOf(i * duracaoCorte);
 
-            ProcessBuilder pbCorte = new ProcessBuilder(
-                    FFMPEG,
-                    "-ss", inicio,                   // Busca rápida (mais rápido)
-                    "-i", caminhoVideo,
-                    "-t", String.valueOf(duracaoCorte),
-                    "-c:v", "libx264",               // Recodifica só o trecho (preciso)
-                    "-preset", "ultrafast",          // MUITO rápido
-                    "-c:a", "aac",
-                    "-movflags", "+faststart",
-                    nomeCorte
+        if (arquivoTemp.exists()) {
+
+            arquivoTemp.delete();
+        }
+
+
+        System.out.println(
+                " Convertendo para 1080x1920..."
+        );
+
+
+        ProcessBuilder pb =
+                new ProcessBuilder(
+
+                        FFMPEG,
+
+                        "-y",
+
+                        "-i",
+                        caminhoVideo,
+
+                        // ========================================
+                        // CROP PARA 9:16
+                        // ========================================
+                        //
+                        // aumenta o vídeo mantendo a proporção
+                        // e depois corta o excesso.
+                        //
+                        "-vf",
+                        "scale=1080:1920:force_original_aspect_ratio=increase,"
+                                + "crop=1080:1920",
+
+                        "-c:v",
+                        "libx264",
+
+                        "-preset",
+                        "ultrafast",
+
+                        "-c:a",
+                        "aac",
+
+                        "-b:a",
+                        "128k",
+
+                        "-movflags",
+                        "+faststart",
+
+                        caminhoTemporario
+                );
+
+
+        pb.redirectErrorStream(true);
+
+
+        Process processo =
+                pb.start();
+
+
+        try (
+                BufferedReader reader =
+                        new BufferedReader(
+                                new InputStreamReader(
+                                        processo.getInputStream()
+                                )
+                        )
+        ) {
+
+            String linha;
+
+            while (
+                    (linha = reader.readLine())
+                            != null
+            ) {
+
+                System.out.println(
+                        "[TIKTOK] "
+                                + linha
+                );
+            }
+        }
+
+
+        int exitCode =
+                processo.waitFor();
+
+
+        if (exitCode != 0) {
+
+            if (arquivoTemp.exists()) {
+                arquivoTemp.delete();
+            }
+
+            throw new RuntimeException(
+                    "Erro ao preparar vídeo para TikTok."
+            );
+        }
+
+
+        if (!arquivoTemp.exists()
+                || arquivoTemp.length() < 1000) {
+
+            throw new RuntimeException(
+                    "Vídeo TikTok não foi criado corretamente."
+            );
+        }
+
+
+        // ========================================================
+        // REMOVE ORIGINAL
+        // ========================================================
+
+        if (!video.delete()) {
+
+            arquivoTemp.delete();
+
+            throw new RuntimeException(
+                    "Não foi possível remover "
+                            + "o vídeo original."
+            );
+        }
+
+
+        // ========================================================
+        // RENOMEIA
+        // ========================================================
+
+        if (!arquivoTemp.renameTo(video)) {
+
+            throw new RuntimeException(
+                    "Não foi possível renomear "
+                            + "o vídeo TikTok."
+            );
+        }
+
+
+        System.out.println(
+                " Vídeo convertido para 1080x1920."
+        );
+
+
+        return caminhoVideo;
+    }
+
+
+    // ============================================================
+    // APLICAR LEGENDA
+    // ============================================================
+
+    public String aplicarLegenda(
+            String caminhoVideo,
+            String caminhoLegenda
+    ) throws IOException, InterruptedException {
+
+        File video =
+                new File(caminhoVideo);
+
+
+        File legenda =
+                new File(caminhoLegenda);
+
+
+        if (!video.exists()) {
+
+            throw new RuntimeException(
+                    "Vídeo não encontrado: "
+                            + caminhoVideo
+            );
+        }
+
+
+        if (!legenda.exists()) {
+
+            throw new RuntimeException(
+                    "Legenda não encontrada: "
+                            + caminhoLegenda
+            );
+        }
+
+
+        String caminhoTemporario =
+                caminhoVideo.replace(
+                        ".mp4",
+                        "_legenda_temp.mp4"
+                );
+
+
+        File arquivoTemp =
+                new File(caminhoTemporario);
+
+
+        if (arquivoTemp.exists()) {
+
+            arquivoTemp.delete();
+        }
+
+
+        // ========================================================
+        // PREPARA CAMINHO DA LEGENDA PARA FFMPEG
+        // ========================================================
+
+        String caminhoLegendaFFmpeg =
+                legenda
+                        .getAbsolutePath()
+                        .replace("\\", "/")
+                        .replace(":", "\\:")
+                        .replace("'", "\\'");
+
+
+        String filtro =
+                "subtitles='"
+                        + caminhoLegendaFFmpeg
+                        + "'";
+
+
+        System.out.println(
+                " Aplicando legenda..."
+        );
+
+
+        System.out.println(
+                " "
+                        + legenda.getAbsolutePath()
+        );
+
+
+        // ========================================================
+        // FFMPEG
+        // ========================================================
+
+        ProcessBuilder pb =
+                new ProcessBuilder(
+
+                        FFMPEG,
+
+                        "-y",
+
+                        "-i",
+                        caminhoVideo,
+
+                        "-vf",
+                        filtro,
+
+                        "-c:v",
+                        "libx264",
+
+                        "-preset",
+                        "ultrafast",
+
+                        "-c:a",
+                        "aac",
+
+                        "-b:a",
+                        "128k",
+
+                        "-movflags",
+                        "+faststart",
+
+                        caminhoTemporario
+                );
+
+
+        pb.redirectErrorStream(true);
+
+
+        Process processo =
+                pb.start();
+
+
+        try (
+                BufferedReader reader =
+                        new BufferedReader(
+                                new InputStreamReader(
+                                        processo.getInputStream()
+                                )
+                        )
+        ) {
+
+            String linha;
+
+            while (
+                    (linha = reader.readLine())
+                            != null
+            ) {
+
+                System.out.println(
+                        "[LEGENDA] "
+                                + linha
+                );
+            }
+        }
+
+
+        int exitCode =
+                processo.waitFor();
+
+
+        if (exitCode != 0) {
+
+            if (arquivoTemp.exists()) {
+                arquivoTemp.delete();
+            }
+
+            throw new RuntimeException(
+                    "Erro ao aplicar legenda no vídeo."
+            );
+        }
+
+
+        if (!arquivoTemp.exists()
+                || arquivoTemp.length() < 1000) {
+
+            throw new RuntimeException(
+                    "FFmpeg não gerou corretamente "
+                            + "o vídeo com legenda."
+            );
+        }
+
+
+        // ========================================================
+        // REMOVE ORIGINAL
+        // ========================================================
+
+        if (!video.delete()) {
+
+            arquivoTemp.delete();
+
+            throw new RuntimeException(
+                    "Não foi possível remover "
+                            + "o vídeo original."
+            );
+        }
+
+
+        // ========================================================
+        // RENOMEIA
+        // ========================================================
+
+        if (!arquivoTemp.renameTo(video)) {
+
+            throw new RuntimeException(
+                    "Erro ao renomear vídeo "
+                            + "com legenda."
+            );
+        }
+
+
+        System.out.println(
+                " Legenda aplicada com sucesso!"
+        );
+
+
+        return caminhoVideo;
+    }
+
+
+    // ============================================================
+    // CORTAR VÍDEO
+    // ============================================================
+
+    public List<String> cortarVideo(
+            String caminhoVideo,
+            String titulo,
+            int duracaoCorte
+    ) throws IOException, InterruptedException {
+
+        List<String> cortes =
+                new ArrayList<>();
+
+
+        File video =
+                new File(caminhoVideo);
+
+
+        if (!video.exists()) {
+
+            throw new RuntimeException(
+                    "Vídeo não encontrado: "
+                            + caminhoVideo
+            );
+        }
+
+
+        if (duracaoCorte <= 0) {
+
+            throw new RuntimeException(
+                    "A duração do corte deve "
+                            + "ser maior que zero."
+            );
+        }
+
+
+        titulo =
+                normalizarTitulo(titulo);
+
+
+        // ========================================================
+        // PASTA DOS CORTES
+        // ========================================================
+
+        String pastaCortes =
+                video.getParent()
+                        + "\\cortes\\";
+
+
+        File pasta =
+                new File(pastaCortes);
+
+
+        if (!pasta.exists()) {
+
+            if (!pasta.mkdirs()) {
+
+                throw new RuntimeException(
+                        "Não foi possível criar "
+                                + "a pasta de cortes."
+                );
+            }
+        }
+
+
+        // ========================================================
+        // DURAÇÃO
+        // ========================================================
+
+        double duracaoTotal =
+                obterDuracaoVideo(
+                        caminhoVideo
+                );
+
+
+        int partes =
+                (int) Math.ceil(
+                        duracaoTotal
+                                / duracaoCorte
+                );
+
+
+        System.out.println(
+                "\n Duração total: "
+                        + duracaoTotal
+                        + " segundos"
+        );
+
+
+        System.out.println(
+                " Total de partes: "
+                        + partes
+        );
+
+
+        // ========================================================
+        // CORTES
+        // ========================================================
+
+        for (
+                int i = 0;
+                i < partes;
+                i++
+        ) {
+
+            int inicioSegundos =
+                    i * duracaoCorte;
+
+
+            double restante =
+                    duracaoTotal
+                            - inicioSegundos;
+
+
+            double tempoCorte =
+                    Math.min(
+                            duracaoCorte,
+                            restante
+                    );
+
+
+            if (tempoCorte <= 0) {
+                continue;
+            }
+
+
+            String nomeCorte =
+                    pastaCortes
+                            + titulo
+                            + "_parte_"
+                            + (i + 1)
+                            + ".mp4";
+
+
+            File arquivoCorte =
+                    new File(nomeCorte);
+
+
+            if (arquivoCorte.exists()) {
+
+                System.out.println(
+                        " Removendo corte antigo..."
+                );
+
+                arquivoCorte.delete();
+            }
+
+
+            System.out.println(
+                    "\n=============================="
             );
 
-            pbCorte.inheritIO();
-            Process p = pbCorte.start();
-            p.waitFor();
 
-            cortes.add(nomeCorte);
+            System.out.println(
+                    " GERANDO CORTE "
+                            + (i + 1)
+            );
+
+
+            System.out.println(
+                    " Início: "
+                            + inicioSegundos
+            );
+
+
+            System.out.println(
+                    "Duração: "
+                            + tempoCorte
+            );
+
+
+            System.out.println(
+                    "=============================="
+            );
+
+
+            // ====================================================
+            // FFMPEG
+            // ====================================================
+
+            ProcessBuilder pb =
+                    new ProcessBuilder(
+
+                            FFMPEG,
+
+                            "-y",
+
+                            "-ss",
+                            String.valueOf(
+                                    inicioSegundos
+                            ),
+
+                            "-i",
+                            caminhoVideo,
+
+                            "-t",
+                            String.valueOf(
+                                    tempoCorte
+                            ),
+
+                            "-c:v",
+                            "libx264",
+
+                            "-preset",
+                            "ultrafast",
+
+                            "-c:a",
+                            "aac",
+
+                            "-b:a",
+                            "128k",
+
+                            "-movflags",
+                            "+faststart",
+
+                            nomeCorte
+                    );
+
+
+            pb.redirectErrorStream(true);
+
+
+            Process processo =
+                    pb.start();
+
+
+            try (
+                    BufferedReader reader =
+                            new BufferedReader(
+                                    new InputStreamReader(
+                                            processo.getInputStream()
+                                    )
+                            )
+            ) {
+
+                String linha;
+
+                while (
+                        (linha = reader.readLine())
+                                != null
+                ) {
+
+                    System.out.println(
+                            "[CORTE] "
+                                    + linha
+                    );
+                }
+            }
+
+
+            int exitCode =
+                    processo.waitFor();
+
+
+            if (exitCode != 0) {
+
+                throw new RuntimeException(
+                        "Erro ao gerar corte "
+                                + (i + 1)
+                );
+            }
+
+
+            if (!arquivoCorte.exists()) {
+
+                throw new RuntimeException(
+                        "FFmpeg não gerou: "
+                                + nomeCorte
+                );
+            }
+
+
+            if (arquivoCorte.length() < 1000) {
+
+                arquivoCorte.delete();
+
+                throw new RuntimeException(
+                        "Arquivo corrompido: "
+                                + nomeCorte
+                );
+            }
+
+
+            System.out.println(
+                    " Corte criado: "
+                            + arquivoCorte.getName()
+            );
+
+
+            cortes.add(
+                    nomeCorte
+            );
         }
+
+
+        System.out.println(
+                "\n Todos os cortes foram criados!"
+        );
+
 
         return cortes;
     }
 
 
-    // 🔹 Obtém duração com ffprobe
-    private double obterDuracaoVideo(String caminhoVideo) throws IOException, InterruptedException {
+    // ============================================================
+    // OBTER DURAÇÃO
+    // ============================================================
 
-        ProcessBuilder pbInfo = new ProcessBuilder(
-                FFPROBE,
-                "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1",
-                caminhoVideo
-        );
+    private double obterDuracaoVideo(
+            String caminhoVideo
+    ) throws IOException, InterruptedException {
 
-        Process pInfo = pbInfo.start();
-        Scanner scanner = new Scanner(pInfo.getInputStream());
-        String duracaoStr = scanner.hasNext() ? scanner.next() : "0";
-        scanner.close();
-        pInfo.waitFor();
+        ProcessBuilder pb =
+                new ProcessBuilder(
 
-        return Double.parseDouble(duracaoStr);
-    }
+                        FFPROBE,
 
-    // 🔹 Comprime o corte
-    public String comprimirVideo(String caminhoEntrada) throws IOException, InterruptedException {
+                        "-v",
+                        "error",
 
-        String saida = caminhoEntrada.replace(".mp4", "_.mp4");
+                        "-show_entries",
+                        "format=duration",
 
-        ProcessBuilder pb = new ProcessBuilder(
-                FFMPEG,
-                "-i", caminhoEntrada,
-                "-vf", "scale=1080:-1",
-                "-vcodec", "libx264",
-                "-crf", "23",
-                "-preset", "slow",
-                "-acodec", "aac",
-                "-b:a", "128k",
-                saida
-        );
+                        "-of",
+                        "default=noprint_wrappers=1:nokey=1",
 
-        pb.inheritIO();
-        Process p = pb.start();
-        p.waitFor();
+                        caminhoVideo
+                );
 
-        File original = new File(caminhoEntrada);
-        if (original.exists()) {
-            original.delete();
+
+        Process processo =
+                pb.start();
+
+
+        BufferedReader reader =
+                new BufferedReader(
+                        new InputStreamReader(
+                                processo.getInputStream()
+                        )
+                );
+
+
+        String duracao =
+                reader.readLine();
+
+
+        processo.waitFor();
+
+
+        if (
+                duracao == null
+                        || duracao.isBlank()
+        ) {
+
+            throw new RuntimeException(
+                    "Não foi possível obter "
+                            + "a duração do vídeo."
+            );
         }
 
-        return saida;
+
+        return Double.parseDouble(
+                duracao
+        );
     }
 }
